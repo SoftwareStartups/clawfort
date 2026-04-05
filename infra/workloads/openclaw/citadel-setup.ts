@@ -52,7 +52,8 @@ TMPDIR=$(mktemp -d)
 trap 'rm -rf "$TMPDIR"' EXIT
 curl -fsSL ${CITADEL_PLUGIN_URL} -o "$TMPDIR/plugin.tgz"
 echo "${CITADEL_PLUGIN_SHA256}  $TMPDIR/plugin.tgz" | sha256sum -c
-${OPENCLAW_BIN} plugins install "$TMPDIR/plugin.tgz"`,
+${OPENCLAW_BIN} plugins install "$TMPDIR/plugin.tgz"
+mkdir -p ~/.openclaw/extensions/citadel-guard-openclaw/skills`,
         triggers: [CITADEL_PLUGIN_VERSION, args.serverId],
       },
       { parent: this, dependsOn: [installBinary] }
