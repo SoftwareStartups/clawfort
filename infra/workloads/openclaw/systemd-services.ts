@@ -36,10 +36,12 @@ export class SystemdServices extends pulumi.ComponentResource {
       `${name}-write-env-file`,
       {
         connection: conn,
-        create: pulumi.interpolate`cat > ~/.openclaw/.env.service <<'__ENVEOF__'
+        create: pulumi.interpolate`mkdir -p /var/tmp/openclaw-compile-cache
+cat > ~/.openclaw/.env.service <<'__ENVEOF__'
 OPENROUTER_API_KEY=${args.secrets.openrouterApiKey}
 GEMINI_API_KEY=${args.secrets.geminiApiKey}
 NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache
+OPENCLAW_NO_RESPAWN=1
 PATH=/home/openclaw/bin:/usr/local/bin:/usr/bin:/bin
 __ENVEOF__
 chmod 600 ~/.openclaw/.env.service`,
