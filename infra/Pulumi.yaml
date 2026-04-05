@@ -1,0 +1,6 @@
+name: openclaw-infra
+runtime:
+  name: nodejs
+  options:
+    typescript: true
+description: Secure self-hosted AI gateway deployment on Hetzner VPS

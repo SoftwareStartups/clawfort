@@ -1,0 +1,39 @@
+{
+  "permissions": {
+    "allow": [
+      "mcp__exa__web_search_exa",
+      "mcp__exa__crawling_exa",
+      "mcp__exa__web_search_advanced_exa",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__query-docs",
+      "WebSearch",
+      "WebFetch",
+      "Skill(commit-commands:commit)",
+      "Bash(pre-commit autoupdate:*)",
+      "Bash(pnpm info:*)",
+      "Bash(npm view:*)",
+      "Bash(task --list:*)",
+      "Bash(task lint:*)",
+      "Bash(task check:*)",
+      "Bash(task typecheck:*)",
+      "Bash(task preview:*)",
+      "Bash(task format:*)",
+      "Bash(pnpm eslint:*)",
+      "Bash(pnpm prettier:*)"
+    ]
+  },
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "case \"$CLAUDE_TOOL_INPUT_FILE_PATH\" in */infra/*.ts) cd infra && pnpm exec prettier --write \"$CLAUDE_TOOL_INPUT_FILE_PATH\" 2>/dev/null && pnpm exec tsc --noEmit 2>&1 | head -20 ;; esac",
+            "timeout": 30
+          }
+        ]
+      }
+    ]
+  }
+}

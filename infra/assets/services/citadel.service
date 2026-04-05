@@ -1,0 +1,33 @@
+[Unit]
+Description=Citadel Content Filter
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/citadel
+Environment=CITADEL_AUTO_DOWNLOAD_MODEL=true
+Environment=CITADEL_ENABLE_HUGOT=true
+ExecStart=%h/citadel/citadel serve 3333
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=%h
+PrivateTmp=true
+# PrivateDevices and ProtectKernelModules omitted: both imply implicit
+# CapabilityBoundingSet drops that fail in user services on systemd 255
+# (exit 218/CAPABILITIES). The openclaw user has zero capabilities, so
+# these directives add no practical protection. See tool-generators.ts
+# where they ARE used for system-level tool services (which have root
+# for sandbox setup).
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target

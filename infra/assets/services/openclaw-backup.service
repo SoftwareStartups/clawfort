@@ -1,0 +1,6 @@
+[Unit]
+Description=OpenClaw backup job
+
+[Service]
+Type=oneshot
+ExecStart=%h/bin/openclaw-backup.sh

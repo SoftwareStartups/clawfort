@@ -1,0 +1,38 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: detect-private-key
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.0
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: eslint
+        name: ESLint
+        language: system
+        entry: bash -c 'cd infra && pnpm lint'
+        pass_filenames: false
+        files: \.(ts|js|mjs)$
+
+      - id: prettier
+        name: Prettier
+        language: system
+        entry: bash -c 'cd infra && pnpm format:check'
+        pass_filenames: false
+        files: \.(ts|js|mjs|json)$
+
+      - id: typecheck
+        name: TypeScript typecheck
+        language: system
+        entry: bash -c 'cd infra && pnpm typecheck'
+        pass_filenames: false
+        files: \.ts$

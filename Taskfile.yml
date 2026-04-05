@@ -1,0 +1,512 @@
+version: "3"
+
+vars:
+  STACK: '{{.STACK | default "prod"}}'
+  OPENCLAW_BIN: ~/.local/bin/openclaw
+
+tasks:
+  default:
+    desc: List all available tasks
+    silent: true
+    cmds:
+      - task --list
+
+  install:
+    desc: Install infra/ dependencies (pnpm)
+    dir: infra
+    cmds:
+      - pnpm install
+
+  lint:
+    desc: Run ESLint
+    dir: infra
+    cmds:
+      - pnpm lint
+
+  lint:fix:
+    desc: Run ESLint --fix
+    dir: infra
+    cmds:
+      - pnpm lint:fix
+
+  format:
+    desc: Run Prettier write
+    dir: infra
+    cmds:
+      - pnpm format
+
+  format:check:
+    desc: Run Prettier check
+    dir: infra
+    cmds:
+      - pnpm format:check
+
+  typecheck:
+    desc: Run tsc --noEmit
+    dir: infra
+    cmds:
+      - pnpm typecheck
+
+  check:
+    desc: Lint + format-check + typecheck (parallel)
+    deps:
+      - lint
+      - format:check
+      - typecheck
+
+  preview:
+    desc: Pulumi dry-run
+    dir: infra
+    cmds:
+      - pulumi preview --stack {{.STACK}}
+
+  up:
+    desc: Deploy to {{.STACK}}
+    dir: infra
+    cmds:
+      - pulumi up --stack {{.STACK}}
+
+  unprotect:
+    desc: Remove protection from server resource (required before destroy)
+    dir: infra
+    cmds:
+      - |
+        URN=$(pulumi stack export --stack {{.STACK}} \
+          | jq -r '.deployment.resources[] | select(.type == "hcloud:index/server:Server") | .urn')
+        [ -z "$URN" ] && echo "No protected server found" && exit 0
+        pulumi state unprotect "$URN" --stack {{.STACK}} --yes
+        echo "Server unprotected: $URN"
+
+  destroy:
+    desc: Tear down all resources in {{.STACK}}
+    prompt: This will destroy ALL resources in the {{.STACK}} stack. Are you sure?
+    deps: [backup:run]
+    cmds:
+      - task: unprotect
+      - cd infra && pulumi destroy --stack {{.STACK}}
+
+  outputs:
+    desc: Show stack outputs (IPs, server ID)
+    dir: infra
+    cmds:
+      - pulumi stack output --stack {{.STACK}}
+
+  info:
+    desc: Display server IP, hostname, and server ID
+    dir: infra
+    cmds:
+      - |
+        echo "Stack:     {{.STACK}}"
+        echo "IP:        $(pulumi stack output tailscaleIp --stack {{.STACK}} 2>/dev/null)"
+        echo "Hostname:  $(pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null)"
+        echo "Server ID: $(pulumi stack output serverId --stack {{.STACK}} 2>/dev/null)"
+
+  ssh:
+    desc: "SSH into the server via Tailscale (usage: task ssh [-- <command>])"
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} {{.CLI_ARGS}}
+
+  verify:
+    desc: Run post-deploy health checks
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - |
+        echo "=== Services ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'systemctl --user is-active openclaw citadel'
+        echo "=== Local health ==="
+        # Port must match GATEWAY_PORT in infra/config/constants.ts
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'curl -sf http://127.0.0.1:18789/health && echo OK'
+        echo "=== Citadel health ==="
+        # Port must match CITADEL_PORT in infra/config/constants.ts
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'curl -sf http://127.0.0.1:3333/health && echo OK'
+        echo "=== Tool sockets ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'systemctl list-units "secure-tool-*.socket" --no-legend'
+        echo "=== Tool binaries ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'for u in /run/secure-tools/*.sock; do tool=$(basename "$u" .sock); exec_line=$(systemctl cat "secure-tool-${tool}@.service" 2>/dev/null | grep "^ExecStart="); [ -n "$exec_line" ] && echo "${tool}: ${exec_line#ExecStart=}" || echo "WARN: ${tool} service unit missing"; done'
+        echo "=== Tool secrets ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'for u in /run/secure-tools/*.sock; do tool=$(basename "$u" .sock); sudo test -f "/home/${tool}-user/.env" && echo "${tool} .env OK"; done'
+        echo "=== Critical packages ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'which socat jq age'
+        echo "=== Config validation ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} '{{.OPENCLAW_BIN}} config validate --json && echo "Config OK"'
+        echo "=== Docker sandbox ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'docker ps --format "table {{`{{.Names}}`}}\t{{`{{.Status}}`}}"'
+        echo "=== Tailscale Serve (HTTPS) ==="
+        curl -sf https://{{.SERVER_HOSTNAME}}/health && echo OK
+        echo "=== Auth enforcement ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} '{{.OPENCLAW_BIN}} gateway call health 2>&1 | grep -q "pairing required" && echo "WS auth enforced (pairing required)" || echo "WARN: expected pairing-required rejection"'
+
+  keys:ssh:
+    desc: Generate SSH keypair for Hetzner
+    cmds:
+      - ssh-keygen -t ed25519 -C "openclaw@hetzner" -f ~/.ssh/hetzner_openclaw
+      - |
+        echo ""
+        echo "Public key (use for ESC sshPublicKey):"
+        cat ~/.ssh/hetzner_openclaw.pub
+
+  keys:workspace:
+    desc: Generate workspace deploy key for GitHub (one-time setup)
+    cmds:
+      - ssh-keygen -t ed25519 -C "openclaw-workspace-deploy" -f openclaw_workspace_deploy -N ""
+      - |
+        echo ""
+        echo "Next steps:"
+        echo "  1. Add private key to ESC:"
+        echo "     task esc:set-workspace-key"
+        echo ""
+        echo "  2. Add this public key to GitHub:"
+        echo "     Repo: <your-workspace-repo> → Settings → Deploy keys"
+        echo "     Title: openclaw-server-deploy | Allow write access: yes"
+        echo ""
+        cat openclaw_workspace_deploy.pub
+        echo ""
+        echo "  3. rm openclaw_workspace_deploy openclaw_workspace_deploy.pub"
+
+  keys:backup:
+    desc: Generate age encryption keypair for backups
+    cmds:
+      - |
+        age-keygen -o openclaw_backup.key 2>&1 | tee /dev/stderr | grep "public key" | awk '{print $NF}'
+        echo ""
+        echo "Public key printed above. Store the private key (openclaw_backup.key) securely offline."
+        echo "Set the public key in ESC with:"
+        echo "  pulumi env set openclaw/prod pulumiConfig.openclaw:agePublicKey <PUBLIC_KEY>"
+
+  keys:token:
+    desc: Generate a random gateway auth token
+    silent: true
+    cmds:
+      - openssl rand -hex 32
+
+  esc:set-ssh-key:
+    desc: Set Hetzner SSH keypair in Pulumi ESC (handles multiline private key)
+    preconditions:
+      - sh: test -f ~/.ssh/hetzner_openclaw
+        msg: "SSH key not found — run: task keys:ssh"
+    cmds:
+      - |
+        OUTFILE=$(mktemp /tmp/esc-yaml-XXXXXX.yaml)
+        trap "rm -f $OUTFILE" EXIT
+        pulumi env get openclaw/prod 2>/dev/null \
+          | awk '/^```yaml/{p=1;next}/^```/{p=0}p' \
+          | python3 scripts/esc-set-ssh-key.py "$OUTFILE" ~/.ssh/hetzner_openclaw.pub ~/.ssh/hetzner_openclaw
+        pulumi env edit openclaw/prod --file "$OUTFILE"
+
+  esc:set-workspace-key:
+    desc: Set workspace deploy SSH private key in Pulumi ESC
+    preconditions:
+      - sh: test -f openclaw_workspace_deploy
+        msg: "Workspace deploy key not found — run: task keys:workspace"
+    cmds:
+      - |
+        OUTFILE=$(mktemp /tmp/esc-yaml-XXXXXX.yaml)
+        trap "rm -f $OUTFILE" EXIT
+        pulumi env get openclaw/prod 2>/dev/null \
+          | awk '/^```yaml/{p=1;next}/^```/{p=0}p' \
+          | python3 scripts/esc-set-workspace-key.py "$OUTFILE" openclaw_workspace_deploy
+        pulumi env edit openclaw/prod --file "$OUTFILE"
+
+  url:
+    desc: Show the OpenClaw web UI URL with auth token
+    dir: infra
+    silent: true
+    cmds:
+      - |
+        HOSTNAME=$(pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null)
+        TOKEN=$(pulumi stack output gatewayToken --stack {{.STACK}} --show-secrets 2>/dev/null)
+        echo "https://${HOSTNAME}/#token=${TOKEN}"
+
+  # --- Server management (remote via Tailscale SSH) ---
+
+  server:status:
+    desc: Show openclaw and citadel service status
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'systemctl --user status openclaw citadel'
+
+  server:restart:
+    desc: Restart openclaw and citadel services
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'systemctl --user restart openclaw citadel'
+
+  server:stop:
+    desc: Stop openclaw and citadel services
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'systemctl --user stop openclaw citadel'
+
+  server:start:
+    desc: Start openclaw and citadel services
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'systemctl --user start openclaw citadel'
+
+  # --- Device management (remote via Tailscale SSH) ---
+
+  devices:list:
+    desc: List paired and pending devices
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} '{{.OPENCLAW_BIN}} devices list'
+
+  devices:approve:
+    desc: "Approve a pending device (usage: task devices:approve -- <device-id>)"
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.CLI_ARGS}}" ]'
+        msg: "Usage: task devices:approve -- <device-id>"
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} '{{.OPENCLAW_BIN}} devices approve {{.CLI_ARGS}}'
+
+  devices:revoke:
+    desc: "Revoke a paired device (usage: task devices:revoke -- <device-id>)"
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.CLI_ARGS}}" ]'
+        msg: "Usage: task devices:revoke -- <device-id>"
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} '{{.OPENCLAW_BIN}} devices revoke --device {{.CLI_ARGS}} --role operator'
+
+  # --- Logs (remote via Tailscale SSH) ---
+
+  logs:openclaw:
+    desc: Show recent openclaw logs
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'journalctl --user -u openclaw -n 100 --no-pager'
+
+  logs:citadel:
+    desc: Show recent citadel logs
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'journalctl --user -u citadel -n 100 --no-pager'
+
+  logs:nginx:
+    desc: Show recent nginx logs
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'sudo journalctl -u nginx -n 100 --no-pager'
+
+  logs:follow:
+    desc: Follow openclaw and citadel logs (live)
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'journalctl --user -u openclaw -u citadel -f'
+
+  # --- Security checks (remote via Tailscale SSH) ---
+
+  security:firewall:
+    desc: Show UFW firewall status
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'sudo ufw status verbose'
+
+  security:isolation:
+    desc: Check tool user isolation (users, iptables, sockets)
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - |
+        echo "=== Tool users ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'for u in /run/secure-tools/*.sock; do tool=$(basename "$u" .sock); id "${tool}-user"; done'
+        echo "=== iptables egress rules ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'sudo iptables -L OUTPUT -n | grep owner'
+        echo "=== Tool sockets ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'systemctl list-sockets "secure-tool-*"'
+
+  security:ssh:
+    desc: Verify SSH hardening (sshd disabled, Tailscale SSH active)
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - |
+        echo "=== sshd status (should be inactive) ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'systemctl is-active ssh 2>/dev/null || echo "inactive (disabled)"'
+        echo "=== Tailscale SSH active ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'sudo tailscale status | head -5'
+        echo "=== fail2ban ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'sudo fail2ban-client status sshd 2>/dev/null || echo "sshd jail inactive (expected — sshd disabled)"'
+        echo "=== Public IP SSH refusal ==="
+        PUBLIC_IP=$(cd infra && pulumi stack output ipv4Address --stack {{.STACK}} 2>/dev/null)
+        ssh -o ConnectTimeout=3 -o BatchMode=yes -o StrictHostKeyChecking=no openclaw@$PUBLIC_IP 'echo FAIL: public SSH open' 2>/dev/null || echo "OK: public IP SSH refused"
+
+  security:tailscale:
+    desc: Check Tailscale connectivity and WireGuard
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - |
+        echo "=== Tailscale status ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'sudo tailscale status'
+        echo "=== WireGuard direct connection ==="
+        tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'sudo tailscale netcheck 2>&1 | head -20'
+
+  security:audit:
+    desc: Run all security checks
+    cmds:
+      - task: security:firewall
+      - task: security:ssh
+      - task: security:tailscale
+      - task: security:isolation
+
+  security:openclaw-audit:
+    desc: Run OpenClaw built-in security audit
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} '{{.OPENCLAW_BIN}} security audit --deep'
+
+  # --- Backup management (remote via Tailscale SSH) ---
+
+  backup:run:
+    desc: Trigger a backup manually
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} '~/bin/openclaw-backup.sh'
+
+  backup:list:
+    desc: List available backups
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    cmds:
+      - tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'ls -lht ~/backups/openclaw-*.tar.gz* 2>/dev/null || echo "No backups found"'
+
+  backup:restore:
+    desc: "Restore from latest backup (or specify BACKUP=filename). Encrypted backups (.age) are downloaded and decrypted locally."
+    vars:
+      SERVER_HOSTNAME:
+        sh: cd infra && pulumi stack output tailscaleHostname --stack {{.STACK}} 2>/dev/null
+      BACKUP: '{{.BACKUP | default "latest"}}'
+      AGE_IDENTITY: '{{.AGE_IDENTITY | default "openclaw_backup.key"}}'
+    preconditions:
+      - sh: '[ -n "{{.SERVER_HOSTNAME}}" ]'
+        msg: "Could not resolve SERVER_HOSTNAME from Pulumi stack outputs"
+    prompt: This will overwrite the current ~/.openclaw directory. Are you sure?
+    cmds:
+      - |
+        if [ "{{.BACKUP}}" = "latest" ]; then
+          LATEST=$(tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'ls -t ~/backups/openclaw-*.tar.gz* 2>/dev/null | head -1')
+          [ -z "$LATEST" ] && echo "No backups found" && exit 1
+          BACKUP_FILE=$(basename "$LATEST")
+        else
+          BACKUP_FILE="{{.BACKUP}}"
+        fi
+
+        if [[ "$BACKUP_FILE" == *.age ]]; then
+          echo "Encrypted backup detected: $BACKUP_FILE"
+          echo "Downloading and decrypting locally with identity: {{.AGE_IDENTITY}}"
+          [ ! -f "{{.AGE_IDENTITY}}" ] && echo "ERROR: age identity file '{{.AGE_IDENTITY}}' not found. Set AGE_IDENTITY=<path>" && exit 1
+          TMPDIR=$(mktemp -d)
+          trap "rm -rf $TMPDIR" EXIT
+          tailscale ssh openclaw@{{.SERVER_HOSTNAME}} "cat ~/backups/$BACKUP_FILE" \
+            | age -d -i "{{.AGE_IDENTITY}}" > "$TMPDIR/backup.tar.gz"
+          tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'systemctl --user stop openclaw citadel'
+          cat "$TMPDIR/backup.tar.gz" | tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'tar xzf - -C "$HOME"'
+          tailscale ssh openclaw@{{.SERVER_HOSTNAME}} 'systemctl --user start citadel openclaw'
+          echo "Restored (decrypted): $BACKUP_FILE"
+        else
+          tailscale ssh openclaw@{{.SERVER_HOSTNAME}} "systemctl --user stop openclaw citadel && tar xzf ~/backups/$BACKUP_FILE -C \"\$HOME\" && systemctl --user start citadel openclaw && echo \"Restored: $BACKUP_FILE\""
+        fi
+
+  redeploy:
+    desc: Destroy and redeploy (full cycle)
+    prompt: This will DESTROY then recreate all resources. Are you sure?
+    cmds:
+      - task: destroy
+      - task: up

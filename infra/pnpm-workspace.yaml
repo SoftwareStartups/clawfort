@@ -1,0 +1,2 @@
+allowBuilds:
+  '@pulumi/command': true

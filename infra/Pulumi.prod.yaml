@@ -1,0 +1,4 @@
+environment:
+  - openclaw/prod
+config:
+  openclaw:location: nbg1

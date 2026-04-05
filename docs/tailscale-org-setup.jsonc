@@ -1,0 +1,35 @@
+{
+  // Device posture: macOS only (single operator by design).
+  "postures": {
+    "posture:secureMac": [
+      "node:os == 'macos'",
+      "node:tsReleaseTrack == 'stable'",
+      "node:tsAutoUpdate"
+    ]
+  },
+  "defaultSrcPosture": ["posture:secureMac"],
+  "tagOwners": {
+    "tag:server": ["autogroup:admin"]
+  },
+  // HTTPS via Tailscale Serve + SSH for Pulumi provisioning.
+  // Port 22 is required in grants for Tailscale SSH to function
+  // with the grants syntax. Auth is handled by the ssh section below.
+  "grants": [
+    {
+      "src": ["autogroup:member"],
+      "dst": ["tag:server"],
+      "ip": ["tcp:443", "tcp:22"]
+    }
+  ],
+  // Tailscale SSH: accept based on Tailscale identity + device posture.
+  // No browser re-auth — posture check (macOS + stable + auto-update) is sufficient
+  // for single-operator setup. Used by both `tailscale ssh` and Pulumi (via Tailscale IP).
+  "ssh": [
+    {
+      "action": "accept",
+      "src": ["autogroup:member"],
+      "dst": ["tag:server"],
+      "users": ["openclaw"]
+    }
+  ]
+}

@@ -1,0 +1,33 @@
+[Unit]
+Description=OpenClaw AI Gateway
+After=citadel.service
+Requires=citadel.service
+
+[Service]
+Type=simple
+WorkingDirectory=%h
+EnvironmentFile=%h/.openclaw/.env.service
+ExecStart=%h/.local/bin/openclaw gateway run
+Restart=on-failure
+RestartSec=5s
+LimitNOFILE=65536
+StandardOutput=journal
+StandardError=journal
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=%h
+PrivateTmp=true
+# PrivateDevices and ProtectKernelModules omitted: both imply implicit
+# CapabilityBoundingSet drops that fail in user services on systemd 255
+# (exit 218/CAPABILITIES). The openclaw user has zero capabilities, so
+# these directives add no practical protection. See tool-generators.ts
+# where they ARE used for system-level tool services (which have root
+# for sandbox setup).
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=default.target
