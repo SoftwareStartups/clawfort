@@ -6,11 +6,11 @@ export const CITADEL_BINARY_URL =
   "https://github.com/SoftwareStartups/citadel/releases/download/v0.1.0/citadel-linux-amd64";
 export const CITADEL_BINARY_SHA256 =
   "b9e45e156b5791161bacfe660819aaa5c717506d0eabe52dc564e99c9dafca0b";
-export const CITADEL_PLUGIN_VERSION = "0.1.1";
+export const CITADEL_PLUGIN_VERSION = "0.2.0";
 export const CITADEL_PLUGIN_URL =
-  "https://github.com/SoftwareStartups/citadel-guard-openclaw/releases/download/v0.1.1/mightyai-citadel-guard-openclaw-0.1.0.tgz";
+  "https://github.com/SoftwareStartups/citadel-guard-openclaw/releases/download/v0.2.0/mightyai-citadel-guard-openclaw-0.2.0.tgz";
 export const CITADEL_PLUGIN_SHA256 =
-  "fe35c9c09fad10af7b511180bf43450f82d6c546f7e2d06419a4957c2be05424";
+  "c69f4cc6a18dbbfe0161268f34a15fe3be970f1cf34a695e1f17f540c8800677";
 export const OPENCLAW_VERSION = "2026.4.5";
 export const GATEWAY_PORT = 18789;
 export const DEFAULT_MODEL = "openrouter/minimax/minimax-m2.7";
