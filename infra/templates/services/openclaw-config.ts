@@ -55,16 +55,24 @@ function buildPluginConfig(
     },
   };
 
-  // NOTE: only plugins with webSearch are added to entries. If a fetch-only
-  // plugin is added in the future, broaden this filter to include webFetch.
   for (const plugin of allPlugins()) {
-    if (!plugin.webSearch) continue;
-    const config: Record<string, unknown> = {
-      webSearch: {
+    if (!plugin.webSearch && !plugin.webFetch) continue;
+    const config: Record<string, unknown> = {};
+    if (plugin.webSearch) {
+      config.webSearch = {
         apiKey: secrets[plugin.configKey],
         ...(plugin.webSearch.baseUrl && { baseUrl: plugin.webSearch.baseUrl }),
-      },
-    };
+      };
+    }
+    if (plugin.webFetch) {
+      config.webFetch = {
+        apiKey: secrets[plugin.configKey],
+        baseUrl: plugin.webFetch.baseUrl,
+        onlyMainContent: plugin.webFetch.onlyMainContent,
+        maxAgeMs: plugin.webFetch.maxAgeMs,
+        timeoutSeconds: plugin.webFetch.timeoutSeconds,
+      };
+    }
     entries[plugin.name] = { enabled: true, config };
   }
 
@@ -177,26 +185,16 @@ function buildChannelConfig(
   return result;
 }
 
-function buildWebToolsConfig(secrets: OpenClawConfigSecrets): Record<string, unknown> {
+function buildWebToolsConfig(_secrets: OpenClawConfigSecrets): Record<string, unknown> {
   const search: Record<string, unknown> = {};
-  const fetch: Record<string, unknown> = {};
 
   for (const plugin of allPlugins()) {
     if (plugin.webSearch?.defaultProvider) {
       search.provider = plugin.name;
     }
-    if (plugin.webFetch) {
-      fetch[plugin.name] = {
-        apiKey: secrets[plugin.configKey],
-        baseUrl: plugin.webFetch.baseUrl,
-        onlyMainContent: plugin.webFetch.onlyMainContent,
-        maxAgeMs: plugin.webFetch.maxAgeMs,
-        timeoutSeconds: plugin.webFetch.timeoutSeconds,
-      };
-    }
   }
 
-  return { search, fetch };
+  return { search };
 }
 
 function buildToolsConfig(secrets: OpenClawConfigSecrets): Record<string, unknown> {

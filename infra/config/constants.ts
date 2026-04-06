@@ -11,7 +11,7 @@ export const CITADEL_PLUGIN_URL =
   "https://github.com/SoftwareStartups/citadel-guard-openclaw/releases/download/v0.1.1/mightyai-citadel-guard-openclaw-0.1.0.tgz";
 export const CITADEL_PLUGIN_SHA256 =
   "fe35c9c09fad10af7b511180bf43450f82d6c546f7e2d06419a4957c2be05424";
-export const OPENCLAW_VERSION = "2026.3.28";
+export const OPENCLAW_VERSION = "2026.4.5";
 export const GATEWAY_PORT = 18789;
 export const DEFAULT_MODEL = "openrouter/minimax/minimax-m2.7";
 export const WORKSPACE_PATH = "/home/openclaw/.openclaw/workspace-main";
