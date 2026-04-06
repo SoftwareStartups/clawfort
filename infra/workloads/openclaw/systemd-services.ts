@@ -50,6 +50,65 @@ chmod 600 ~/.openclaw/.env.service`,
       { parent: this }
     );
 
+    // Write auth-profiles.json so CLI commands (openclaw doctor, openclaw memory status)
+    // can find provider keys outside the systemd service context
+    const _writeAuthProfiles = new command.remote.Command(
+      `${name}-write-auth-profiles`,
+      {
+        connection: conn,
+        create: pulumi.interpolate`set -euo pipefail
+AUTH_FILE=~/.openclaw/agents/main/agent/auth-profiles.json
+mkdir -p "$(dirname "$AUTH_FILE")"
+cat > "$AUTH_FILE" <<'__AUTHEOF__'
+{
+  "version": 1,
+  "profiles": {
+    "openrouter:default": {
+      "type": "api_key",
+      "provider": "openrouter",
+      "key": "${args.secrets.openrouterApiKey}"
+    },
+    "google:default": {
+      "type": "api_key",
+      "provider": "google",
+      "key": "${args.secrets.geminiApiKey}"
+    }
+  }
+}
+__AUTHEOF__
+chmod 600 "$AUTH_FILE"`,
+        triggers: [args.secrets.openrouterApiKey, args.secrets.geminiApiKey, args.serverId],
+      },
+      { parent: this, dependsOn: [writeEnvFile] }
+    );
+
+    // Export env vars to shell profile so `openclaw doctor` (interactive shell) sees them
+    const _writeShellEnv = new command.remote.Command(
+      `${name}-write-shell-env`,
+      {
+        connection: conn,
+        create: `set -euo pipefail
+grep -q 'NODE_COMPILE_CACHE' ~/.profile 2>/dev/null || cat >> ~/.profile <<'EOF'
+export NODE_COMPILE_CACHE=/var/tmp/openclaw-compile-cache
+export OPENCLAW_NO_RESPAWN=1
+EOF`,
+        triggers: [args.serverId],
+      },
+      { parent: this, dependsOn: [writeEnvFile] }
+    );
+
+    // Remove stale gateway service from prior OpenClaw versions
+    const cleanupStaleServices = new command.remote.Command(
+      `${name}-cleanup-stale-services`,
+      {
+        connection: conn,
+        create: `systemctl --user disable --now openclaw-gateway.service 2>/dev/null || true
+rm -f ~/.config/systemd/user/openclaw-gateway.service`,
+        triggers: [args.serverId],
+      },
+      { parent: this }
+    );
+
     const copyCitadelService = new command.remote.CopyToRemote(
       `${name}-copy-citadel-service`,
       {
@@ -83,7 +142,7 @@ chmod 600 ~/.openclaw/.env.service`,
         create: "systemctl --user daemon-reload",
         triggers: [citadelServiceHash, openclawServiceHash, args.serverId],
       },
-      { parent: this, dependsOn: [copyCitadelService, copyOpenclawService] }
+      { parent: this, dependsOn: [copyCitadelService, copyOpenclawService, cleanupStaleServices] }
     );
 
     const enableServices = new command.remote.Command(
