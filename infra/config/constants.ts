@@ -11,13 +11,13 @@ export const CITADEL_PLUGIN_URL =
   "https://github.com/SoftwareStartups/citadel-guard-openclaw/releases/download/v0.2.2/mightyai-citadel-guard-openclaw-0.2.2.tgz";
 export const CITADEL_PLUGIN_SHA256 =
   "aa3b8d00b70e6968ae65517a9af9d835fc9b15379f2b7053253305534b180726";
-export const OPENCLAW_VERSION = "2026.4.5";
+export const OPENCLAW_VERSION = "2026.4.27";
 export const GATEWAY_PORT = 18789;
 export const DEFAULT_MODEL = "openrouter/minimax/minimax-m2.7";
 export const WORKSPACE_PATH = "/home/openclaw/.openclaw/workspace-main";
 export const OPENCLAW_BIN = "/home/openclaw/.local/bin/openclaw";
 export const NODEJS_MAJOR_VERSION = 22;
-export const BUN_VERSION = "1.3.11";
+export const BUN_VERSION = "1.3.13";
 
 // Context & memory optimization tuning parameters
 // Ref: https://docs.openclaw.ai/gateway/configuration-reference
