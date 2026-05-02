@@ -1,2 +1,5 @@
 allowBuilds:
   '@pulumi/command': true
+overrides:
+  protobufjs@<=7.5.5: 7.5.5
+  cjs-module-lexer@<=2.2.0: 2.2.0
